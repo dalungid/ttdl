@@ -123,6 +123,7 @@ def upload_to_facebook(video_path, title, description, access_token, page_id):
             "video_id": video_id,
             "upload_phase": "finish",
             "video_state": "PUBLISHED",
+            "title": title,
             "description": title
         }
         publish_response = requests.post(publish_url, data=publish_data)
@@ -203,6 +204,7 @@ def download_tiktok_video(url):
         print("\n[i] Memulai proses upload ke Facebook Reels...")
         success, message = upload_to_facebook(
             video_path=output_path,
+            title=title,
             description=title,
             access_token=config['access_token'],
             page_id=config['page_id']
