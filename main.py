@@ -6,10 +6,9 @@ import json
 import subprocess
 import shutil
 import platform
-import time
 
 # Konfigurasi Facebook API
-API_VERSION = 'v18.0'  # Versi API terbaru per 2024
+API_VERSION = 'v22.0'  # Versi API terbaru per 2024
 CHUNK_SIZE = 5 * 1024 * 1024  # 5MB per chunk
 
 def check_os():
@@ -31,9 +30,6 @@ def check_ffmpeg():
         except:
             pass
     return False
-
-def generate_random_number():
-    return f"{random.randint(100000, 999999)}"
 
 def get_config():
     default = {
@@ -65,10 +61,11 @@ def upload_reels(video_path, title, description, access_token, page_id=None):
         # Step 1: Inisiasi upload
         parent_object = page_id if page_id else 'me'
         start_url = f"https://graph.facebook.com/{API_VERSION}/{parent_object}/video_reels"
+        file_size = os.path.getsize(video_path)
+        
         start_params = {
-            'access_token': access_token,
             'upload_phase': 'start',
-            'file_size': os.path.getsize(video_path)
+            'access_token': access_token
         }
         start_response = requests.post(start_url, data=start_params)
         start_data = start_response.json()
@@ -77,10 +74,10 @@ def upload_reels(video_path, title, description, access_token, page_id=None):
             return False, f"Gagal inisiasi: {start_data.get('error', {}).get('message', 'Unknown error')}"
 
         video_id = start_data['video_id']
+        upload_url = f"https://rupload.facebook.com/video-upload/{API_VERSION}/{video_id}"
         print(f"[i] Video ID: {video_id}")
 
         # Step 2: Upload video
-        upload_url = f"https://rupload.facebook.com/video-upload/{API_VERSION}/{video_id}"
         headers = {
             'Authorization': f'OAuth {access_token}',
             'User-Agent': 'Python/ReelsUploader',
@@ -94,14 +91,13 @@ def upload_reels(video_path, title, description, access_token, page_id=None):
                 if not chunk:
                     break
                 
-                headers['offset'] = str(offset)
-                headers['file_size'] = str(len(chunk))
+                chunk_headers = {
+                    'offset': str(offset),
+                    'file_size': str(file_size),
+                    **headers
+                }
                 
-                response = requests.post(
-                    upload_url,
-                    headers=headers,
-                    data=chunk
-                )
+                response = requests.post(upload_url, headers=chunk_headers, data=chunk)
                 
                 if response.status_code != 200:
                     return False, f"Upload gagal di offset {offset}: {response.text}"
@@ -109,12 +105,12 @@ def upload_reels(video_path, title, description, access_token, page_id=None):
                 offset += len(chunk)
                 print(f"[i] Mengupload chunk {offset/1024/1024:.1f}MB", end='\r')
         
-        # Step 3: Finalisasi upload
+        # Step 3: Finalisasi upload dan publikasi
         finish_params = {
             'access_token': access_token,
             'upload_phase': 'finish',
+            'video_id': video_id,
             'video_state': 'PUBLISHED',
-            'title': title,
             'description': description
         }
         finish_url = f"https://graph.facebook.com/{API_VERSION}/{parent_object}/video_reels"
@@ -127,91 +123,6 @@ def upload_reels(video_path, title, description, access_token, page_id=None):
             
     except Exception as e:
         return False, f"Error: {str(e)}"
-
-def download_tiktok_video(url):
-    try:
-        output_dir = 'result'
-        os.makedirs(output_dir, exist_ok=True)
-        config = get_config()
-        
-        # Unduh video dari TikWM API
-        api_url = f"https://www.tikwm.com/api/?url={url}"
-        response = requests.get(api_url)
-        data = response.json()
-
-        if data.get('code') != 0:
-            print(f"Error API: {data.get('msg', 'Tidak dapat mengambil data video')}")
-            return
-
-        video_data = data.get('data', {})
-        video_url = video_data.get('play') or video_data.get('wmplay')
-        title = video_data.get('title', 'No Title')
-
-        if not video_url:
-            print("Error: URL video tidak ditemukan")
-            return
-
-        # Unduh video sementara
-        temp_input = f"temp_{generate_random_number()}.mp4"
-        with open(temp_input, 'wb') as f:
-            f.write(requests.get(video_url).content)
-
-        # Konfigurasi FFmpeg
-        output_filename = f"filmora-project-{generate_random_number()}.mp4"
-        output_path = os.path.join(output_dir, output_filename)
-        
-        filter_complex = (
-            f"drawtext=text='{config['text']}':"
-            f"fontcolor='{config['font_color']}@{config['alpha']}':"
-            f"fontsize={config['font_size']}:"
-            f"x=10:y=(h-text_h)/2:"
-            f"shadowx={config['shadow_offset']}:"
-            f"shadowy={config['shadow_offset']}:"
-            f"shadowcolor={config['font_color']}@{config['alpha']}"
-        )
-
-        ffmpeg_cmd = [
-            'ffmpeg',
-            '-y',
-            '-i', temp_input,
-            '-vf', filter_complex,
-            '-c:v', 'libx264',
-            '-b:v', '8M',
-            '-c:a', 'aac',
-            '-b:a', '192k',
-            output_path
-        ]
-
-        # Jalankan FFmpeg
-        result = subprocess.run(ffmpeg_cmd, capture_output=True)
-        if result.returncode != 0:
-            print("Error FFmpeg:")
-            print(result.stderr.decode())
-            return
-
-        # Upload ke Facebook Reels
-        print("\n[i] Memulai proses upload ke Facebook Reels...")
-        success, message = upload_reels(
-            video_path=output_path,
-            title=title,
-            description=config['text'],
-            access_token=config['access_token'],
-            page_id=config['page_id']
-        )
-        
-        if success:
-            print(f"\n[?] {message}")
-            os.remove(output_path)
-            print(f"[?] File {output_filename} berhasil dihapus")
-        else:
-            print(f"\n[!] {message}")
-            print("[i] File tetap disimpan di folder result untuk diupload manual")
-
-    except Exception as e:
-        print(f"Error: {str(e)}")
-    finally:
-        if os.path.exists(temp_input):
-            os.remove(temp_input)
 
 if __name__ == "__main__":
     os_type = check_os()
@@ -227,7 +138,11 @@ if __name__ == "__main__":
         sys.exit(1)
 
     if len(sys.argv) != 2:
-        print("Penggunaan: python main.py <URL_TikTok>")
+        print("Penggunaan: python main.py <path_video>")
         sys.exit(1)
     
-    download_tiktok_video(sys.argv[1])
+    video_path = sys.argv[1]
+    config = get_config()
+    
+    status, message = upload_reels(video_path, "Judul Video", "Deskripsi #hashtag", config['access_token'], config['page_id'])
+    print(f"[i] {message}")
