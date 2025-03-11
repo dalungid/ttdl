@@ -6,9 +6,10 @@ import json
 import subprocess
 import shutil
 import platform
+import time
 
 # Konfigurasi Facebook API
-API_VERSION = 'v22.0'  # Versi API terbaru per 2024
+API_VERSION = 'v22.0'
 
 def check_os():
     system = platform.system().lower()
@@ -58,63 +59,79 @@ def get_config():
     except:
         return default
 
-def upload_reels(video_path, title, description, access_token, page_id=None):
+def upload_to_facebook(video_path, title, description, access_token, page_id):
     try:
         # Step 1: Inisiasi upload session
-        parent_object = page_id if page_id else 'me'
-        start_url = f"https://graph.facebook.com/{API_VERSION}/{parent_object}/video_reels"
+        print("[i] Memulai inisiasi session upload...")
+        start_url = f"https://graph.facebook.com/{API_VERSION}/{page_id}/video_reels"
+        start_data = {
+            "upload_phase": "START",
+            "access_token": access_token
+        }
+        start_response = requests.post(start_url, json=start_data)
+        
+        if start_response.status_code != 200:
+            return False, f"Inisiasi gagal: {start_response.text}"
+        
+        start_json = start_response.json()
+        video_id = start_json.get('video_id')
+        upload_url = start_json.get('upload_url')
+        
+        if not video_id or not upload_url:
+            return False, "Invalid response dari Facebook: video_id/upload_url tidak ditemukan"
+
+        # Step 2: Upload video utuh
+        print(f"[i] Mengupload video ke Facebook (ID: {video_id})...")
         file_size = os.path.getsize(video_path)
-
-        start_params = {
-            'upload_phase': 'start',
-            'access_token': access_token,
-            'file_size': file_size
-        }
-        start_response = requests.post(start_url, data=start_params)
-        start_data = start_response.json()
-
-        if 'video_id' not in start_data:
-            return False, f"Gagal inisiasi: {start_data.get('error', {}).get('message', 'Unknown error')}"
-
-        video_id = start_data['video_id']
-        upload_url = start_data['upload_url']
-        print(f"[i] Video ID: {video_id}")
-
-        # Step 2: Upload video (tanpa chunking)
         headers = {
-            'Authorization': f'OAuth {access_token}',
-            'offset': '0',
-            'file_size': str(file_size),
-            'Content-Type': 'application/octet-stream'
+            "Authorization": f"OAuth {access_token}",
+            "offset": "0",
+            "file_size": str(file_size),
+            "Content-Type": "application/octet-stream"
         }
-
+        
         with open(video_path, 'rb') as f:
-            response = requests.post(
-                upload_url,
-                headers=headers,
-                data=f
-            )
-
-        if response.status_code != 200 or not response.json().get('success'):
-            return False, f"Upload gagal: {response.text}"
-
-        print("[✓] Video berhasil diupload")
-
-        # Step 3: Finalisasi dan publish
-        finish_params = {
-            'access_token': access_token,
-            'upload_phase': 'finish',
-            'video_state': 'PUBLISHED',
-            'title': title,
-            'description': description
+            upload_response = requests.post(upload_url, headers=headers, data=f)
+        
+        if upload_response.status_code != 200:
+            return False, f"Upload gagal: {upload_response.text}"
+        
+        # Step 3: Cek status upload
+        print("[i] Memeriksa status upload...")
+        status_url = f"https://graph.facebook.com/{API_VERSION}/{video_id}"
+        status_params = {
+            "access_token": access_token,
+            "fields": "status"
         }
-        finish_url = f"https://graph.facebook.com/{API_VERSION}/{parent_object}/video_reels"
-        finish_response = requests.post(finish_url, data=finish_params)
+        
+        max_retries = 10
+        for _ in range(max_retries):
+            status_response = requests.get(status_url, params=status_params)
+            status_data = status_response.json().get('status', {})
+            
+            if status_data.get('uploading_phase', {}).get('status') == 'complete':
+                break
+            time.sleep(5)
+        else:
+            return False, "Timeout menunggu upload selesai"
 
-        if finish_response.status_code == 200 and finish_response.json().get('success'):
+        # Step 4: Publish Reels
+        print("[i] Mempublikasikan Reels...")
+        publish_url = f"https://graph.facebook.com/{API_VERSION}/{page_id}/video_reels"
+        publish_data = {
+            "access_token": access_token,
+            "video_id": video_id,
+            "upload_phase": "finish",
+            "video_state": "PUBLISHED",
+            "title": title,
+            "description": description
+        }
+        publish_response = requests.post(publish_url, data=publish_data)
+        
+        if publish_response.status_code == 200:
             return True, "Video berhasil dipublikasikan"
         else:
-            return False, f"Finalisasi gagal: {finish_response.text}"
+            return False, f"Publish gagal: {publish_response.text}"
 
     except Exception as e:
         return False, f"Error: {str(e)}"
@@ -124,8 +141,9 @@ def download_tiktok_video(url):
         output_dir = 'result'
         os.makedirs(output_dir, exist_ok=True)
         config = get_config()
-
+        
         # Unduh video dari TikWM API
+        print("[i] Mengambil data video dari TikTok...")
         api_url = f"https://www.tikwm.com/api/?url={url}"
         response = requests.get(api_url)
         data = response.json()
@@ -137,6 +155,7 @@ def download_tiktok_video(url):
         video_data = data.get('data', {})
         video_url = video_data.get('play') or video_data.get('wmplay')
         title = video_data.get('title', 'No Title')
+        description = config['text']
 
         if not video_url:
             print("Error: URL video tidak ditemukan")
@@ -150,7 +169,7 @@ def download_tiktok_video(url):
         # Konfigurasi FFmpeg
         output_filename = f"filmora-project-{generate_random_number()}.mp4"
         output_path = os.path.join(output_dir, output_filename)
-
+        
         filter_complex = (
             f"drawtext=text='{config['text']}':"
             f"fontcolor='{config['font_color']}@{config['alpha']}':"
@@ -174,22 +193,23 @@ def download_tiktok_video(url):
         ]
 
         # Jalankan FFmpeg
+        print("[i] Memproses video dengan FFmpeg...")
         result = subprocess.run(ffmpeg_cmd, capture_output=True)
         if result.returncode != 0:
             print("Error FFmpeg:")
             print(result.stderr.decode())
             return
 
-        # Upload ke Facebook Reels
+        # Upload ke Facebook
         print("\n[i] Memulai proses upload ke Facebook Reels...")
-        success, message = upload_reels(
+        success, message = upload_to_facebook(
             video_path=output_path,
             title=title,
-            description=config['text'],
+            description=description,
             access_token=config['access_token'],
             page_id=config['page_id']
         )
-
+        
         if success:
             print(f"\n[✓] {message}")
             os.remove(output_path)
@@ -220,5 +240,5 @@ if __name__ == "__main__":
     if len(sys.argv) != 2:
         print("Penggunaan: python main.py <URL_TikTok>")
         sys.exit(1)
-
+    
     download_tiktok_video(sys.argv[1])
