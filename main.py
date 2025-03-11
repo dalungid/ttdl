@@ -41,8 +41,8 @@ def get_config():
         "font_color": "#FFFFFF",
         "alpha": 0.7,
         "shadow_offset": 1,
-        "access_token": "YOUR_TOKEN_HERE",
-        "page_id": ""  # Kosongkan untuk akun pribadi
+        "access_token": "",
+        "page_id": ""
     }
     try:
         with open('config.json', 'r') as f:
@@ -58,6 +58,47 @@ def get_config():
             }
     except:
         return default
+
+def save_config(config):
+    with open('config.json', 'w') as f:
+        json.dump(config, f, indent=2)
+
+def check_access_token(access_token):
+    if not access_token:
+        return False, "Token kosong"
+    
+    url = f"https://graph.facebook.com/{API_VERSION}/debug_token"
+    params = {
+        'input_token': access_token,
+        'access_token': access_token  # Butuh token valid untuk debug
+    }
+    
+    try:
+        response = requests.get(url, params=params)
+        data = response.json()
+        
+        if 'error' in data:
+            return False, data['error']['message']
+        
+        # Cek izin yang diperlukan
+        required_perms = ['pages_manage_posts', 'pages_manage_videos']
+        perms = data['data'].get('scopes', [])
+        
+        missing_perms = [p for p in required_perms if p not in perms]
+        if missing_perms:
+            return False, f"Token kekurangan izin: {', '.join(missing_perms)}"
+        
+        # Cek masa berlaku
+        if data['data'].get('is_valid') != True:
+            return False, "Token tidak valid"
+        
+        if data['data'].get('expires_at') < time.time():
+            return False, "Token sudah kadaluwarsa"
+            
+        return True, "Token valid"
+    
+    except Exception as e:
+        return False, f"Error validasi token: {str(e)}"
 
 def upload_to_facebook(video_path, title, description, access_token, page_id):
     try:
@@ -142,6 +183,25 @@ def download_tiktok_video(url):
         os.makedirs(output_dir, exist_ok=True)
         config = get_config()
         
+        # Validasi token sebelum proses
+        print("[i] Memeriksa validitas token Facebook...")
+        valid, message = check_access_token(config['access_token'])
+        
+        if not valid:
+            print(f"[!] Token bermasalah: {message}")
+            new_token = input("Masukkan token baru: ").strip()
+            config['access_token'] = new_token
+            save_config(config)
+            print("[✓] Token baru disimpan di config.json")
+        
+        # Validasi page_id
+        if not config['page_id']:
+            print("[!] Page ID kosong di config.json")
+            new_page_id = input("Masukkan Page ID: ").strip()
+            config['page_id'] = new_page_id
+            save_config(config)
+            print("[✓] Page ID baru disimpan di config.json")
+
         # Unduh video dari TikWM API
         print("[i] Mengambil data video dari TikTok...")
         api_url = f"https://www.tikwm.com/api/?url={url}"
