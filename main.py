@@ -124,7 +124,7 @@ def upload_to_facebook(video_path, title, description, access_token, page_id):
             "upload_phase": "finish",
             "video_state": "PUBLISHED",
             "title": title,
-            "description": title
+            "description": description
         }
         publish_response = requests.post(publish_url, data=publish_data)
         
@@ -154,8 +154,8 @@ def download_tiktok_video(url):
 
         video_data = data.get('data', {})
         video_url = video_data.get('play') or video_data.get('wmplay')
-        title = video_data.get('title', 'No Title')
-        description = config['text']
+        title = config['text']
+        description = video_data.get('title')
 
         if not video_url:
             print("Error: URL video tidak ditemukan")
@@ -205,7 +205,7 @@ def download_tiktok_video(url):
         success, message = upload_to_facebook(
             video_path=output_path,
             title=title,
-            description=title,
+            description=description,
             access_token=config['access_token'],
             page_id=config['page_id']
         )
