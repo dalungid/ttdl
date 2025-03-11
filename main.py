@@ -70,7 +70,7 @@ def check_access_token(access_token):
     url = f"https://graph.facebook.com/{API_VERSION}/debug_token"
     params = {
         'input_token': access_token,
-        'access_token': access_token  # Butuh token valid untuk debug
+        'access_token': access_token
     }
     
     try:
@@ -80,7 +80,6 @@ def check_access_token(access_token):
         if 'error' in data:
             return False, data['error']['message']
         
-        # Cek izin yang diperlukan
         required_perms = ['pages_manage_posts', 'pages_manage_videos']
         perms = data['data'].get('scopes', [])
         
@@ -88,11 +87,10 @@ def check_access_token(access_token):
         if missing_perms:
             return False, f"Token kekurangan izin: {', '.join(missing_perms)}"
         
-        # Cek masa berlaku
         if data['data'].get('is_valid') != True:
             return False, "Token tidak valid"
         
-        if data['data'].get('expires_at') < time.time():
+        if data['data'].get('expires_at', 0) < time.time():
             return False, "Token sudah kadaluwarsa"
             
         return True, "Token valid"
@@ -100,7 +98,7 @@ def check_access_token(access_token):
     except Exception as e:
         return False, f"Error validasi token: {str(e)}"
 
-def upload_to_facebook(video_path, title, description, access_token, page_id):
+def upload_to_facebook(video_path, description, access_token, page_id):
     try:
         # Step 1: Inisiasi upload session
         print("[i] Memulai inisiasi session upload...")
@@ -164,8 +162,7 @@ def upload_to_facebook(video_path, title, description, access_token, page_id):
             "video_id": video_id,
             "upload_phase": "finish",
             "video_state": "PUBLISHED",
-            "title": title,
-            "description": description
+            "description": description  # Deskripsi dari API TikTok
         }
         publish_response = requests.post(publish_url, data=publish_data)
         
@@ -202,20 +199,18 @@ def download_tiktok_video(url):
             save_config(config)
             print("[✓] Page ID baru disimpan di config.json")
 
-        # Unduh video dari TikWM API
+        # Unduh video dari API baru
         print("[i] Mengambil data video dari TikTok...")
-        api_url = f"https://www.tikwm.com/api/?url={url}"
+        api_url = f"https://api.paxsenix.biz.id/dl/tiktok?url={url}"
         response = requests.get(api_url)
         data = response.json()
 
-        if data.get('code') != 0:
+        if data.get('code') != 0:  # Sesuaikan dengan struktur API baru
             print(f"Error API: {data.get('msg', 'Tidak dapat mengambil data video')}")
             return
 
-        video_data = data.get('data', {})
-        video_url = video_data.get('play') or video_data.get('wmplay')
-        title = video_data.get('title', 'No Title')
-        description = config['text']
+        video_url = data.get('video')
+        description = data.get('description', 'No Description')  # Deskripsi dari API
 
         if not video_url:
             print("Error: URL video tidak ditemukan")
@@ -226,7 +221,7 @@ def download_tiktok_video(url):
         with open(temp_input, 'wb') as f:
             f.write(requests.get(video_url).content)
 
-        # Konfigurasi FFmpeg
+        # Konfigurasi FFmpeg (tetap menggunakan config.json untuk overlay)
         output_filename = f"filmora-project-{generate_random_number()}.mp4"
         output_path = os.path.join(output_dir, output_filename)
         
@@ -264,8 +259,7 @@ def download_tiktok_video(url):
         print("\n[i] Memulai proses upload ke Facebook Reels...")
         success, message = upload_to_facebook(
             video_path=output_path,
-            title=title,
-            description=description,
+            description=description,  # Deskripsi dari API TikTok
             access_token=config['access_token'],
             page_id=config['page_id']
         )
