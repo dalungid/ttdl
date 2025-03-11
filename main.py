@@ -80,7 +80,7 @@ def check_access_token(access_token):
         if 'error' in data:
             return False, data['error']['message']
         
-        required_perms = ['pages_manage_posts', 'pages_manage_videos']
+        required_perms = ['pages_manage_posts', 'pages_manage_engagement', 'publish_video']
         perms = data['data'].get('scopes', [])
         
         missing_perms = [p for p in required_perms if p not in perms]
