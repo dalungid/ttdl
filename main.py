@@ -4,94 +4,230 @@ import os
 import random
 import json
 import subprocess
+import shutil
+import platform
+import time
+
+# Konfigurasi Facebook API
+API_VERSION = 'v18.0'  # Versi API terbaru per 2024
+CHUNK_SIZE = 5 * 1024 * 1024  # 5MB per chunk
+
+def check_os():
+    system = platform.system().lower()
+    if 'linux' in system:
+        return 'termux' if 'ANDROID_ROOT' in os.environ else 'linux'
+    return 'windows' if 'windows' in system else 'unknown'
+
+def check_ffmpeg():
+    if shutil.which('ffmpeg'):
+        return True
+    if check_os() == 'termux':
+        try:
+            return subprocess.run(
+                ['pkg', 'list-installed', 'ffmpeg'],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            ).returncode == 0
+        except:
+            pass
+    return False
 
 def generate_random_number():
-    return random.randint(100000, 999999)
+    return f"{random.randint(100000, 999999)}"
 
 def get_config():
+    default = {
+        "text": "FB: GameBoo",
+        "font_size": 24,
+        "font_color": "#FFFFFF",
+        "alpha": 0.7,
+        "shadow_offset": 1,
+        "access_token": "YOUR_TOKEN_HERE",
+        "page_id": ""  # Kosongkan untuk akun pribadi
+    }
     try:
         with open('config.json', 'r') as f:
-            return json.load(f)
+            config = json.load(f)
+            return {
+                "text": config.get("text", default["text"]),
+                "font_size": config.get("font_size", default["font_size"]),
+                "font_color": config.get("font_color", default["font_color"]),
+                "alpha": config.get("alpha", default["alpha"]),
+                "shadow_offset": config.get("shadow_offset", default["shadow_offset"]),
+                "access_token": config.get("access_token", default["access_token"]),
+                "page_id": config.get("page_id", default["page_id"])
+            }
     except:
-        return {"text": "FB: GameBoo", "font_size": 24, "font_color": "#FFFFFF@0.7"}
+        return default
+
+def upload_reels(video_path, title, description, access_token, page_id=None):
+    try:
+        # Step 1: Inisiasi upload
+        parent_object = page_id if page_id else 'me'
+        start_url = f"https://graph.facebook.com/{API_VERSION}/{parent_object}/video_reels"
+        start_params = {
+            'access_token': access_token,
+            'upload_phase': 'start',
+            'file_size': os.path.getsize(video_path)
+        }
+        start_response = requests.post(start_url, data=start_params)
+        start_data = start_response.json()
+        
+        if 'video_id' not in start_data:
+            return False, f"Gagal inisiasi: {start_data.get('error', {}).get('message', 'Unknown error')}"
+
+        video_id = start_data['video_id']
+        print(f"[i] Video ID: {video_id}")
+
+        # Step 2: Upload video
+        upload_url = f"https://rupload.facebook.com/video-upload/{API_VERSION}/{video_id}"
+        headers = {
+            'Authorization': f'OAuth {access_token}',
+            'User-Agent': 'Python/ReelsUploader',
+            'Content-Type': 'application/octet-stream'
+        }
+        
+        with open(video_path, 'rb') as f:
+            offset = 0
+            while True:
+                chunk = f.read(CHUNK_SIZE)
+                if not chunk:
+                    break
+                
+                headers['offset'] = str(offset)
+                headers['file_size'] = str(len(chunk))
+                
+                response = requests.post(
+                    upload_url,
+                    headers=headers,
+                    data=chunk
+                )
+                
+                if response.status_code != 200:
+                    return False, f"Upload gagal di offset {offset}: {response.text}"
+                
+                offset += len(chunk)
+                print(f"[i] Mengupload chunk {offset/1024/1024:.1f}MB", end='\r')
+        
+        # Step 3: Finalisasi upload
+        finish_params = {
+            'access_token': access_token,
+            'upload_phase': 'finish',
+            'video_state': 'PUBLISHED',
+            'title': title,
+            'description': description
+        }
+        finish_url = f"https://graph.facebook.com/{API_VERSION}/{parent_object}/video_reels"
+        finish_response = requests.post(finish_url, data=finish_params)
+        
+        if finish_response.status_code == 200:
+            return True, "Video berhasil dipublikasikan"
+        else:
+            return False, f"Finalisasi gagal: {finish_response.text}"
+            
+    except Exception as e:
+        return False, f"Error: {str(e)}"
 
 def download_tiktok_video(url):
     try:
-        # Membuat folder result jika belum ada
         output_dir = 'result'
         os.makedirs(output_dir, exist_ok=True)
-
-        # Mengambil konfigurasi
         config = get_config()
-        text = config.get("text", "FB: GameBoo")
-        font_size = config.get("font_size", 24)
-        font_color = config.get("font_color", "#FFFFFF@0.7")
-
-        # Mengirim permintaan ke API
+        
+        # Unduh video dari TikWM API
         api_url = f"https://www.tikwm.com/api/?url={url}"
         response = requests.get(api_url)
         data = response.json()
 
         if data.get('code') != 0:
-            print(f"Error: {data.get('msg', 'Unknown error')}")
+            print(f"Error API: {data.get('msg', 'Tidak dapat mengambil data video')}")
             return
 
-        # Mendapatkan URL video
         video_data = data.get('data', {})
         video_url = video_data.get('play') or video_data.get('wmplay')
-        
+        title = video_data.get('title', 'No Title')
+
         if not video_url:
-            print("Tidak dapat menemukan URL video")
+            print("Error: URL video tidak ditemukan")
             return
 
-        # Mengunduh video
-        video_response = requests.get(video_url)
-        video_response.raise_for_status()
-
-        # Menyimpan video sementara
-        temp_filename = f"temp_video_{generate_random_number()}.mp4"
-        with open(temp_filename, 'wb') as f:
-            f.write(video_response.content)
-
-        # Membuat nama file output
-        output_filename = f"filmora-project-{generate_random_number()}.mp4"
-        output_path = os.path.join(output_dir, output_filename)
+        # Unduh video sementara
+        temp_input = f"temp_{generate_random_number()}.mp4"
+        with open(temp_input, 'wb') as f:
+            f.write(requests.get(video_url).content)
 
         # Konfigurasi FFmpeg
+        output_filename = f"filmora-project-{generate_random_number()}.mp4"
+        output_path = os.path.join(output_dir, output_filename)
+        
+        filter_complex = (
+            f"drawtext=text='{config['text']}':"
+            f"fontcolor='{config['font_color']}@{config['alpha']}':"
+            f"fontsize={config['font_size']}:"
+            f"x=10:y=(h-text_h)/2:"
+            f"shadowx={config['shadow_offset']}:"
+            f"shadowy={config['shadow_offset']}:"
+            f"shadowcolor={config['font_color']}@{config['alpha']}"
+        )
+
         ffmpeg_cmd = [
             'ffmpeg',
-            '-i', temp_filename,
-            '-vf', f"drawtext=text='{text}':fontcolor={font_color}:fontsize={font_size}:x=10:y=(h-text_h)/2:box=1:boxcolor=#000000@0.5:boxborderw=5",
-            '-c:a', 'copy',
+            '-y',
+            '-i', temp_input,
+            '-vf', filter_complex,
+            '-c:v', 'libx264',
+            '-b:v', '8M',
+            '-c:a', 'aac',
+            '-b:a', '192k',
             output_path
         ]
 
-        # Menjalankan FFmpeg
-        subprocess.run(ffmpeg_cmd, check=True)
-        os.remove(temp_filename)  # Hapus file sementara
+        # Jalankan FFmpeg
+        result = subprocess.run(ffmpeg_cmd, capture_output=True)
+        if result.returncode != 0:
+            print("Error FFmpeg:")
+            print(result.stderr.decode())
+            return
 
-        print(f"\nVideo berhasil diproses dan disimpan di: {output_path}")
+        # Upload ke Facebook Reels
+        print("\n[i] Memulai proses upload ke Facebook Reels...")
+        success, message = upload_reels(
+            video_path=output_path,
+            title=title,
+            description=config['text'],
+            access_token=config['access_token'],
+            page_id=config['page_id']
+        )
+        
+        if success:
+            print(f"\n[?] {message}")
+            os.remove(output_path)
+            print(f"[?] File {output_filename} berhasil dihapus")
+        else:
+            print(f"\n[!] {message}")
+            print("[i] File tetap disimpan di folder result untuk diupload manual")
 
-    except requests.exceptions.RequestException as e:
-        print(f"Error jaringan: {str(e)}")
-    except subprocess.CalledProcessError as e:
-        print(f"Error FFmpeg: {str(e)}")
     except Exception as e:
-        print(f"Error tak terduga: {str(e)}")
+        print(f"Error: {str(e)}")
     finally:
-        if os.path.exists(temp_filename):
-            os.remove(temp_filename)
+        if os.path.exists(temp_input):
+            os.remove(temp_input)
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print("Penggunaan: python tiktok_downloader.py <URL_TikTok>")
-        sys.exit(1)
-    
-    # Cek ketersediaan FFmpeg
-    if not subprocess.run(['which', 'ffmpeg'], capture_output=True).stdout:
-        print("ERROR: FFmpeg tidak terinstal!")
-        print("Silakan instal FFmpeg terlebih dahulu")
+    os_type = check_os()
+    print(f"[i] Sistem terdeteksi: {os_type.capitalize()}")
+
+    if not check_ffmpeg():
+        print("[!] FFmpeg tidak ditemukan!")
+        print("    Panduan instalasi:")
+        if os_type == 'windows':
+            print("    Unduh FFmpeg dari https://ffmpeg.org/download.html")
+        elif os_type in ['linux', 'termux']:
+            print(f"    {'pkg' if os_type == 'termux' else 'sudo apt'} install ffmpeg")
         sys.exit(1)
 
-    tiktok_url = sys.argv[1]
-    download_tiktok_video(tiktok_url)
+    if len(sys.argv) != 2:
+        print("Penggunaan: python main.py <URL_TikTok>")
+        sys.exit(1)
+    
+    download_tiktok_video(sys.argv[1])

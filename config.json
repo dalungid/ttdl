@@ -1,5 +1,9 @@
 {
     "text": "FB: GameBoo",
     "font_size": 24,
-    "font_color": "#FFFFFF@0.7"
+    "font_color": "#FFFFFF",
+    "alpha": 0.7,
+    "shadow_offset": 1,
+    "access_token": "EAAQJysCx4qUBO8AUnd8j6iZB5VETLuhduYcFeOdFMSSbFXux8dpYLkOhjqrzjjwnpGUM6Ht3fh3d0kd81aqWAvTZAH21hGU69dfVmDqgZCwJCbbxbUpUzH2NxvL2jPGHGMF15kCJzs8RDvKUIXG9i8rq2SrlelrmrFvZCD9G5NZBXT2RxlhqiqeIbQgDGdeoZA9lCA1T5VxwGhGp17",
+    "page_id": "1307765199247130"
 }
