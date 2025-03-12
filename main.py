@@ -7,9 +7,14 @@ import subprocess
 import shutil
 import platform
 import time
+from pytube import YouTube
 
-# Konfigurasi Facebook API
+# Konfigurasi
 API_VERSION = 'v22.0'
+CONFIG_FILE = 'config.json'
+
+def print_wa(message):
+    print(f"[WA] {message}")
 
 def check_os():
     system = platform.system().lower()
@@ -42,33 +47,47 @@ def get_config():
         "alpha": 0.7,
         "shadow_offset": 1,
         "access_token": "YOUR_TOKEN_HERE",
-        "page_id": ""  # Kosongkan untuk akun pribadi
+        "page_id": ""
     }
     try:
-        with open('config.json', 'r') as f:
+        with open(CONFIG_FILE, 'r') as f:
             config = json.load(f)
-            return {
-                "text": config.get("text", default["text"]),
-                "font_size": config.get("font_size", default["font_size"]),
-                "font_color": config.get("font_color", default["font_color"]),
-                "alpha": config.get("alpha", default["alpha"]),
-                "shadow_offset": config.get("shadow_offset", default["shadow_offset"]),
-                "access_token": config.get("access_token", default["access_token"]),
-                "page_id": config.get("page_id", default["page_id"])
-            }
+            return {**default, **config}
     except:
         return default
 
-def upload_to_facebook(video_path, title, description, access_token, page_id):
+def update_config(new_data):
+    config = get_config()
+    config.update(new_data)
+    with open(CONFIG_FILE, 'w') as f:
+        json.dump(config, f, indent=4)
+
+def check_token_validity(token):
+    try:
+        url = f"https://graph.facebook.com/{API_VERSION}/me?access_token={token}"
+        response = requests.get(url)
+        return response.status_code == 200
+    except:
+        return False
+
+def upload_to_facebook(video_path, title, description):
+    config = get_config()
+    access_token = config['access_token']
+    page_id = config['page_id']
+
+    if not check_token_validity(access_token):
+        print_wa("❌ Token Facebook expired! Harap perbarui token dengan !updatetoken")
+        return False, "Token tidak valid"
+
     try:
         # Step 1: Inisiasi upload session
         print("[i] Memulai inisiasi session upload...")
         start_url = f"https://graph.facebook.com/{API_VERSION}/{page_id}/video_reels"
         start_data = {
-            "upload_phase": "START",
+            "upload_phase": "start",
             "access_token": access_token
         }
-        start_response = requests.post(start_url, json=start_data)
+        start_response = requests.post(start_url, data=start_data)
         
         if start_response.status_code != 200:
             return False, f"Inisiasi gagal: {start_response.text}"
@@ -78,9 +97,9 @@ def upload_to_facebook(video_path, title, description, access_token, page_id):
         upload_url = start_json.get('upload_url')
         
         if not video_id or not upload_url:
-            return False, "Invalid response dari Facebook: video_id/upload_url tidak ditemukan"
+            return False, "Invalid response dari Facebook"
 
-        # Step 2: Upload video utuh
+        # Step 2: Upload video
         print(f"[i] Mengupload video ke Facebook (ID: {video_id})...")
         file_size = os.path.getsize(video_path)
         headers = {
@@ -95,36 +114,27 @@ def upload_to_facebook(video_path, title, description, access_token, page_id):
         
         if upload_response.status_code != 200:
             return False, f"Upload gagal: {upload_response.text}"
-        
+
         # Step 3: Cek status upload
         print("[i] Memeriksa status upload...")
         status_url = f"https://graph.facebook.com/{API_VERSION}/{video_id}"
-        status_params = {
-            "access_token": access_token,
-            "fields": "status"
-        }
+        status_params = {"fields": "status", "access_token": access_token}
         
-        max_retries = 10
-        for _ in range(max_retries):
-            status_response = requests.get(status_url, params=status_params)
-            status_data = status_response.json().get('status', {})
-            
-            if status_data.get('uploading_phase', {}).get('status') == 'complete':
-                break
+        for _ in range(10):
             time.sleep(5)
+            status_response = requests.get(status_url, params=status_params)
+            if status_response.json().get('status', {}).get('video_status', '') == 'ready':
+                break
         else:
             return False, "Timeout menunggu upload selesai"
 
-        # Step 4: Publish Reels
+        # Step 4: Publish
         print("[i] Mempublikasikan Reels...")
-        publish_url = f"https://graph.facebook.com/{API_VERSION}/{page_id}/video_reels"
+        publish_url = f"https://graph.facebook.com/{API_VERSION}/{video_id}"
         publish_data = {
             "access_token": access_token,
-            "video_id": video_id,
-            "upload_phase": "finish",
-            "video_state": "PUBLISHED",
-            "title": title,
-            "description": description
+            "description": description,
+            "published": "true"
         }
         publish_response = requests.post(publish_url, data=publish_data)
         
@@ -136,38 +146,13 @@ def upload_to_facebook(video_path, title, description, access_token, page_id):
     except Exception as e:
         return False, f"Error: {str(e)}"
 
-def download_tiktok_video(url):
+def process_video(temp_input, description):
     try:
+        config = get_config()
         output_dir = 'result'
         os.makedirs(output_dir, exist_ok=True)
-        config = get_config()
         
-        # Unduh video dari TikWM API
-        print("[i] Mengambil data video dari TikTok...")
-        api_url = f"https://www.tikwm.com/api/?url={url}"
-        response = requests.get(api_url)
-        data = response.json()
-
-        if data.get('code') != 0:
-            print(f"Error API: {data.get('msg', 'Tidak dapat mengambil data video')}")
-            return
-
-        video_data = data.get('data', {})
-        video_url = video_data.get('play') or video_data.get('wmplay')
-        title = config['text']
-        description = video_data.get('title')
-
-        if not video_url:
-            print("Error: URL video tidak ditemukan")
-            return
-
-        # Unduh video sementara
-        temp_input = f"temp_{generate_random_number()}.mp4"
-        with open(temp_input, 'wb') as f:
-            f.write(requests.get(video_url).content)
-
-        # Konfigurasi FFmpeg
-        output_filename = f"filmora-project-{generate_random_number()}.mp4"
+        output_filename = f"processed_{generate_random_number()}.mp4"
         output_path = os.path.join(output_dir, output_filename)
         
         filter_complex = (
@@ -192,53 +177,139 @@ def download_tiktok_video(url):
             output_path
         ]
 
-        # Jalankan FFmpeg
-        print("[i] Memproses video dengan FFmpeg...")
         result = subprocess.run(ffmpeg_cmd, capture_output=True)
         if result.returncode != 0:
-            print("Error FFmpeg:")
+            print_wa("❌ Gagal memproses video")
             print(result.stderr.decode())
-            return
+            return None
+        
+        return output_path
 
-        # Upload ke Facebook
-        print("\n[i] Memulai proses upload ke Facebook Reels...")
+    except Exception as e:
+        print_wa(f"❌ Error processing: {str(e)}")
+        return None
+
+def handle_tiktok(url):
+    try:
+        print_wa("⏳ Memulai proses TikTok...")
+        
+        # Download video
+        api_url = f"https://www.tikwm.com/api/?url={url}"
+        response = requests.get(api_url)
+        data = response.json()
+
+        if data.get('code') != 0:
+            print_wa("❌ Gagal mengambil video TikTok")
+            return False
+
+        video_url = data['data'].get('play') or data['data'].get('wmplay')
+        temp_input = f"temp_{generate_random_number()}.mp4"
+        
+        with open(temp_input, 'wb') as f:
+            f.write(requests.get(video_url).content)
+
+        # Process video
+        output_path = process_video(temp_input, data['data']['title'])
+        if not output_path:
+            return False
+
+        # Upload
         success, message = upload_to_facebook(
-            video_path=output_path,
-            title=title,
-            description=description,
-            access_token=config['access_token'],
-            page_id=config['page_id']
+            output_path,
+            get_config()['text'],
+            data['data']['title']
         )
         
         if success:
-            print(f"\n[✓] {message}")
+            print_wa("✅ Berhasil upload ke Facebook!")
             os.remove(output_path)
-            print(f"[✓] File {output_filename} berhasil dihapus")
         else:
-            print(f"\n[!] {message}")
-            print("[i] File tetap disimpan di folder result untuk diupload manual")
+            print_wa(f"❌ Gagal upload: {message}")
+        
+        os.remove(temp_input)
+        return True
 
     except Exception as e:
-        print(f"Error: {str(e)}")
-    finally:
-        if os.path.exists(temp_input):
-            os.remove(temp_input)
+        print_wa(f"❌ Error: {str(e)}")
+        return False
+
+def handle_youtube(url):
+    try:
+        print_wa("⏳ Memulai proses YouTube...")
+        
+        yt = YouTube(url)
+        video = yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').desc().first()
+        temp_input = f"temp_{generate_random_number()}.mp4"
+        video.download(filename=temp_input)
+
+        # Process video
+        output_path = process_video(temp_input, yt.title)
+        if not output_path:
+            return False
+
+        # Upload
+        success, message = upload_to_facebook(
+            output_path,
+            get_config()['text'],
+            yt.title
+        )
+        
+        if success:
+            print_wa("✅ Berhasil upload ke Facebook!")
+            os.remove(output_path)
+        else:
+            print_wa(f"❌ Gagal upload: {message}")
+        
+        os.remove(temp_input)
+        return True
+
+    except Exception as e:
+        print_wa(f"❌ Error: {str(e)}")
+        return False
 
 if __name__ == "__main__":
-    os_type = check_os()
-    print(f"[i] Sistem terdeteksi: {os_type.capitalize()}")
+    if len(sys.argv) < 2:
+        print("Penggunaan: python main.py <command> [args...]")
+        sys.exit(1)
 
+    # Check FFmpeg
     if not check_ffmpeg():
-        print("[!] FFmpeg tidak ditemukan!")
-        print("    Panduan instalasi:")
-        if os_type == 'windows':
-            print("    Unduh FFmpeg dari https://ffmpeg.org/download.html")
-        elif os_type in ['linux', 'termux']:
-            print(f"    {'pkg' if os_type == 'termux' else 'sudo apt'} install ffmpeg")
+        print_wa("❌ FFmpeg tidak terinstall!")
         sys.exit(1)
 
-    if len(sys.argv) != 2:
-        print("Penggunaan: python main.py <URL_TikTok>")
-        sys.exit(1)
-    
-    download_tiktok_video(sys.argv[1])
+    command = sys.argv[1]
+    args = sys.argv[2:]
+
+    try:
+        if command == 't':
+            for url in args:
+                handle_tiktok(url)
+        elif command == 'tl':
+            with open(args[0], 'r') as f:
+                for url in f.read().splitlines():
+                    handle_tiktok(url)
+        elif command == 'y':
+            for url in args:
+                handle_youtube(url)
+        elif command == 'yl':
+            with open(args[0], 'r') as f:
+                for url in f.read().splitlines():
+                    handle_youtube(url)
+        elif command == 'cektoken':
+            valid = check_token_validity(get_config()['access_token'])
+            status = "VALID ✅" if valid else "EXPIRED ❌"
+            print_wa(f"Status Token: {status}")
+        elif command == 'updatetoken':
+            update_config({'access_token': args[0]})
+            print_wa("✅ Token berhasil diperbarui")
+        elif command == 'gantiwm':
+            update_config({'text': ' '.join(args)})
+            print_wa("✅ Watermark berhasil diubah")
+        elif command == 'gantifp':
+            update_config({'page_id': args[0]})
+            print_wa("✅ Page ID berhasil diubah")
+        else:
+            print_wa("❌ Command tidak dikenali")
+
+    except Exception as e:
+        print_wa(f"❌ Error sistem: {str(e)}")
