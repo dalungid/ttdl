@@ -137,14 +137,7 @@ def prompt_for_new_token():
 
 def upload_to_facebook(video_path, title, description, access_token, page_id):
     try:
-        # Step 1: Periksa validitas token sebelum melanjutkan
-        is_valid, message = check_token_validity(access_token)
-        if not is_valid:
-            print(f"[!] Token tidak valid: {message}")
-            new_token = prompt_for_new_token()
-            access_token = new_token  # Gunakan token baru untuk proses selanjutnya
-
-        # Step 2: Inisiasi upload session
+        # Step 1: Inisiasi upload session
         print("[i] Memulai inisiasi session upload...")
         start_url = f"https://graph.facebook.com/{API_VERSION}/{page_id}/video_reels"
         start_data = {
@@ -163,7 +156,7 @@ def upload_to_facebook(video_path, title, description, access_token, page_id):
         if not video_id or not upload_url:
             return False, "Invalid response dari Facebook: video_id/upload_url tidak ditemukan"
 
-        # Step 3: Upload video utuh
+        # Step 2: Upload video utuh
         print(f"[i] Mengupload video ke Facebook (ID: {video_id})...")
         file_size = os.path.getsize(video_path)
         headers = {
@@ -179,7 +172,7 @@ def upload_to_facebook(video_path, title, description, access_token, page_id):
         if upload_response.status_code != 200:
             return False, f"Upload gagal: {upload_response.text}"
         
-        # Step 4: Cek status upload
+        # Step 3: Cek status upload
         print("[i] Memeriksa status upload...")
         status_url = f"https://graph.facebook.com/{API_VERSION}/{video_id}"
         status_params = {
@@ -198,7 +191,7 @@ def upload_to_facebook(video_path, title, description, access_token, page_id):
         else:
             return False, "Timeout menunggu upload selesai"
 
-        # Step 5: Publish Reels
+        # Step 4: Publish Reels
         print("[i] Mempublikasikan Reels...")
         publish_url = f"https://graph.facebook.com/{API_VERSION}/{page_id}/video_reels"
         publish_data = {
@@ -220,7 +213,7 @@ def upload_to_facebook(video_path, title, description, access_token, page_id):
         return False, f"Error: {str(e)}"
 
 
-def download_tiktok_video(url):
+def download_tiktok_video(url, access_token):
     try:
         output_dir = 'result'
         os.makedirs(output_dir, exist_ok=True)
@@ -290,7 +283,7 @@ def download_tiktok_video(url):
             video_path=output_path,
             title=title,
             description=description,
-            access_token=config['access_token'],
+            access_token=access_token,
             page_id=config['page_id']
         )
         
@@ -325,5 +318,17 @@ if __name__ == "__main__":
     if len(sys.argv) != 2:
         print("Penggunaan: python main.py <URL_TikTok>")
         sys.exit(1)
-    
-    download_tiktok_video(sys.argv[1])
+
+    # Ambil konfigurasi
+    config = get_config()
+    access_token = config['access_token']
+
+    # Cek validitas token sebelum melanjutkan
+    is_valid, message = check_token_validity(access_token)
+    if not is_valid:
+        print(f"[!] Token tidak valid: {message}")
+        access_token = prompt_for_new_token()
+
+    # Lanjutkan dengan proses unduhan dan upload
+    tiktok_url = sys.argv[1]
+    download_tiktok_video(tiktok_url, access_token)
