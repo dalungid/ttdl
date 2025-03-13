@@ -11,11 +11,27 @@ const SCRIPT_PATH = 'main.py';
 // Inisialisasi Client WhatsApp
 const client = new Client({
     authStrategy: new LocalAuth(),
-    puppeteer: { 
+    puppeteer: {
       headless: true,
-      executablePath: '/usr/bin/chromium-browser',
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
-    }
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas',
+        '--no-first-run',
+        '--no-zygote',
+        '--single-process',
+        '--disable-gpu',
+        '--aggressive-cache-discard',
+        '--disable-cache',
+        '--disable-application-cache',
+        '--disable-offline-load-stale-cache',
+        '--disk-cache-size=0'
+      ],
+      executablePath: '/usr/bin/chromium-browser' // Pastikan path benar
+    },
+    qrTimeout: 0, // Nonaktifkan timeout QR
+    authTimeout: 0 // Nonaktifkan timeout auth
   });
 
 // Handle QR Code
@@ -29,7 +45,17 @@ client.on('qr', qr => {
 client.on('ready', () => {
     console.log('Client is ready!');
 });
-
+client.on('auth_failure', msg => {
+    console.error('Auth failure:', msg);
+  });
+  
+  client.on('disconnected', (reason) => {
+    console.log('Client logged out:', reason);
+  });
+  
+  client.on('loading_screen', (percent, message) => {
+    console.log('Loading:', percent, message);
+  });
 // Handle Pesan
 client.on('message', async msg => {
     try {
